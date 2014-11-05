@@ -93,52 +93,46 @@ stackToReg32:
 /* converteix un caràcter que representa un
    número hexadecimal a un enter */
 asc2val:
-	push r16
 	cpi r16, 'a'
 	brlo t 					; si el caràcter introduit és < 'a'
 	subi r16, 32 				; lowercase -> uppercase
 t:	cpi r16, 'A' 				; si r16 >= 'A', salta:
 	brsh w
 	subi r16, 48 				; restem l'offset de '0'
-	rjmp checkVal
+	rjmp chkVal
 w:	subi r16, 65 - 10 			; restem l'offset de 'A'
-checkVal:
-	cpi r16, 16
-	brsh asc2valErr
-	pop r9
+chkVal:	cpi r16, 16
+	brsh a2vErr
 	ret
-asc2valErr:
-	pop r16
-	cpi r16, '+'
-	brne isResta
+a2vErr:	cpi r16, '+'
+	brne isRest
 	ret
-isResta:
-	cpi r16, '-'
+isRest:	cpi r16, '-'
 	breq endAsc
 	set 					; el flag T s'utilitza com a flag d'error
-	ldi r16, 0
+	ldi r16, 0xFF 				; error
 endAsc:	ret
 
 /* converteix un valor enter a un caràcter que
    representa el número en hexadecimal */
 val2asc:
+	push r16
 	cpi r16, 16
 	brsh valErr 				; si l'enter és >= 16 -> valErr
 	cpi r16, 10 				; si l'enter és >= 10 -> lletra
 	brsh w2
 	subi r16, -48
-	ret
+	rjmp endVal
 w2:	subi r16, -65 + 10
-	ret
-valErr:	cpi r16, '+'
-	breq endVal
-	cpi r16, '-'
-	breq endVal 				; si els caràcters són diferents de +/-
+	rjmp endVal
+valErr:	pop r16
 	set 					; el flag T s'utilitza com a flag d'error
-endVal:	ret
+	ret
+endVal:	pop r15 				; stack -> r15 (volem ignorar el valor de la pila)
+	ret
 
+/* suma de dos registres */
 suma:
-	// Es realitza la suma
 	adc r0, r2
 	adc r1, r3
 
@@ -223,70 +217,50 @@ resta:
 
 /* Màquina d'estats */
 stateMachine:
+	ledOff
+	cpi r16, 'r'
+	breq SMreset
 	cpi r16, '='
 	breq SMshow
 	cpi r16, '+'
 	breq SMop
 	cpi r16, '-'
 	breq SMop
-	// Comprovem si s'ha introduit un numero
-	/*mov r20, r16
-	call asc2val
+
+	push r16
+	call asc2val 				; comprovem si s'ha introduit un caràcter valid
 	brts SMerr 				; si el caràcter enviat [^0-9a-zA-Z+\-] -> SMerror
-	*/
-	// --------
-	call tx
-	call asc2val
+	
 	mov r17, r16
 	call pushStack1
 	inc r25 				; comptador de numeros a l'stack
+	
+	pop r16 
+	call tx
 	ret
-SMshow: 
-	add r29, r25
+SMshow: add r29, r25 				; mou el punter per apuntar als 'n' primers zeros a l'esquerra
 	call stackToReg32
-_SMshow:
-	/* DEBUG:
-	call popStack1
-	cpi r17, 0xFF
-	breq SMs1en
-	mov r16, r17
-	call tx
-	rjmp _SMshow
-SMs1en:	mov r16, r24
-	call tx
-SMshow2:call popStack2
-	cpi r17, 0xFF
-	breq SMSend2
-	mov r16, r17
-	call tx
-	rjmp SMshow2
-	/ END-DEBUG */
-SMSend2:
-	/*///// DEBUG
-	ldi r16, '-'
-	call tx
-	subi r29, -48
-	mov r16, r29
-	call tx
-	subi r31, -48
-	mov r16, r31
-	call tx
-	// DEBUG!!*/
 	cpi r24, '+'
 	brne SMresta
 	call suma
-	ret
+	rjmp SMreset
 SMresta:call resta
-	ret
+	rjmp SMreset
 SMop:	add r29, r25
 	ldi r25, 0
 	call stackToReg10
 	call resetStack1
-	mov r24, r16
+	mov r24, r16 				; el registre r24 s'utilitza per desar quin el signe de la operació
 	call tx
 	ret
-/*SMerr:call inputErr
-	ret*/
+SMerr:	ledOn
+	clt
+	ret
+SMreset:ldi r16, '\n'
+	call tx
+	ldi r16, '\r'
+	call tx
+	rcall mainReset
 
 /* rutina de transmissió de byte,
 el valor a transmetre està al registre r16 */
@@ -304,6 +278,19 @@ __vector_18:
 	lds r16, UDR0
 	call stateMachine
 	reti
+
+mainReset:
+	/* set-up custom stacks/queues */
+	// la pila comença a la posició "1". A la posició "0" es guarda la longitud
+	call resetStack1
+
+	ldi r25, 0 			; comptadors de caràcters introduïts
+	ldi r26, 0
+
+	/* es desa quina és la opearació que s'ha de fer quan es rep '=' */
+	ldi r24, 0
+	clt
+	ret
 
 main:	/* configuració dels pins, és possible que no calgui*/
 	ldi r16, 0b00000010
@@ -336,15 +323,7 @@ main:	/* configuració dels pins, és possible que no calgui*/
 	/* habilitem interrupcions */
 	sei
 
-	/* set-up custom stacks/queues */
-	// la pila comença a la posició "1". A la posició "0" es guarda la longitud
-	call resetStack1
-
-	ldi r25, 0 			; comptadors de caràcters introduïts
-	ldi r26, 0
-
-	/* es desa quina és la opearació que s'ha de fer quan es rep '=' */
-	ldi r24, 0
+	rcall mainReset
 	
 	ledOff
 
