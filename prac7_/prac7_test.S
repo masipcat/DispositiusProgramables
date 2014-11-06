@@ -24,7 +24,7 @@ TOP = 25
 .endm
 
 /* es crea una pila a la memòria de dades. Es fa push de r17 */
-pushStack1:
+pushQueue:
 	// Y = r29:28
 	//       H:L
 	// S'utilitza r29 per desar el "bottom" de la pila (s'usarà per fer el pop com un cua)
@@ -39,7 +39,7 @@ pushStack1:
 	ret
 
 /* retorna el primer valor de la pila a r17 */
-popStack1:
+popQueue:
 	push r28
 	mov r28, r29 		; movem el començament del bottom
 	ldi r29, 0x1
@@ -48,97 +48,37 @@ popStack1:
 	pop r28
 	ret
 
-resetStack1:
+resetQueue:
 	ldi r28, 0x0
 	ldi r29, 0x0
 	ldi r17, 0 		; afegim 4 zeros al començament
-	call pushStack1
-	call pushStack1
-	call pushStack1
-	call pushStack1
+	call pushQueue
+	call pushQueue
+	call pushQueue
+	call pushQueue
 	ret
 
 /* buida la pila des del registre indicat a r30 'n' vegades,
   inidcant la 'n' al registre r31 */
-stackToReg:
+queue2reg:
 	push r16
 	push r20
 
 	mov r20, r27 		; r27 trobem a quants registres s'han d'omplir
-	;mov r27, r26
-	;mov r26, r27
-	;inc r26 		; compensar el -X del 'ld'
 	dec r20
-	inc r26
+	inc r26 		; compensem el pre-decrement (st -X)
 	ldi r27, 0 		; ld reg -> 0x00-- (on -- és el valor de r16)
 
-	// DEBUG
-	/*ldi r16, '/'
-	call tx
-	mov r16, r20
-	subi r16, -48
-	call tx
-	ldi r16, '/'
-	call tx*/
-	// END DEBUG
-
-	/*ldi r16, '['
-	call tx
-	call popStack1
+_s2r:	call popQueue
 	mov r16, r17
 	swap r16
-	call val2asc
-	call tx
-	call popStack1
-	eor r16, r17
-	call val2asc
-	call tx
-	call popStack1
-	mov r16, r17
-	swap r16
-	call val2asc
-	call tx
-	call popStack1
-	eor r16, r17
-	call val2asc
-	call tx
-	ldi r16, ']'
-	call tx
-	rjmp _eeend*/
-
-_s2r:	
-	// DEBUG
-	/*ldi r16, '('
-	call tx
-	ldi r16, 'r'
-	call tx
-	mov r16, r27
-	subi r16, -48
-	call tx
-	mov r16, r26
-	subi r16, -48
-	call tx
-	ldi r16, ')'
-	call tx*/
-	// END DEBUG
-
-	call popStack1
-	mov r16, r17
-	swap r16
-	call popStack1
+	call popQueue
 	eor r16, r17
 
 	st -X, r16
 	dec r20 		; decrementem els registres restants
 	cpi r20, 0
 	brge _s2r 		; branch if r20 >= 0
-
-	// DEBUG
-	/*mov r16, r0
-	cpi r16, 0x10
-	brne _eeend
-	ledOn*/
-	// END-DEBUG
 
 _eeend:	pop r20
 	pop r16
@@ -182,23 +122,12 @@ w2:	subi r16, -65 + 10
 valErr:	pop r16
 	set 			; el flag T s'utilitza com a flag d'error
 	ret
-endVal:	pop r15 		; stack -> r15 (volem ignorar el valor de la pila)
+endVal:	pop r15 		; Queue -> r15 (volem ignorar el valor de la pila)
 	ret
 
-/* suma de dos registres */
-suma:
-	add r0, r2
-	adc r1, r3
-
-__next:	ldi r16, '='
-	call tx
-
-	brcc __nas 		; si el carry = 0 -> salta a __nas
-	ldi r16, '1' 		; si no, el mostra per pantalla
-	call tx
-
+showResult:
 	// r1
-__nas:	ldi r17, 0b11110000 	; mask
+	ldi r17, 0b11110000 	; mask
 	mov r16, r1
 	and r16, r17
 	swap r16
@@ -223,50 +152,36 @@ __nas:	ldi r17, 0b11110000 	; mask
 	call val2asc
 	call tx
 
-	/*ldi r16, ':'
-	call tx
-
-	// DEBUG:
-
-	// r3
-	ldi r17, 0b11110000 	; mask
-	mov r16, r3
-	and r16, r17
-	swap r16
-	call val2asc
-	call tx
-	swap r17
-	mov r16, r3
-	and r16, r17
-	call val2asc
-	call tx
-
-	// r2
-	ldi r17, 0b11110000 	; mask
-	mov r16, r2
-	and r16, r17
-	swap r16
-	call val2asc
-	call tx
-	swap r17
-	mov r16, r2
-	and r16, r17
-	call val2asc
-	call tx
-
-	// END-debug*/
-
-	// Falta implmenetar el Carry
+	rcall showFlags
 
 	ret
 
+/* suma de dos registres */
+suma:
+	add r0, r2
+	adc r1, r3
+
+	ldi r16, '='
+	call tx
+
+	/*brcc _sumNC 		; si el carry = 0 -> salta a _sumNC
+	ldi r16, '1' 		; si no, el mostra per pantalla
+	call tx*/
+
+_sumNC:	ret
+
 resta:
-	/*neg r2
+	push r16
+	neg r2
 	neg r3 			; fem el complement A2 del segon byte
-	subi r3, 1 		; restem l'1 que s'ha sumat al fer el complement A2
-	rcall suma*/
-	sub r0, r2
-	sbc r1, r3
+	mov r16, r3
+	subi r16, 1 		; restem l'1 que s'ha sumat al fer el complement A2
+	mov r3, r16
+	pop r16
+	rcall suma
+	ret
+
+showFlags:
 	ret
 
 /* Màquina d'estats */
@@ -286,31 +201,32 @@ stateMachine:
 	brts SMerr 		; si el caràcter enviat [^0-9a-zA-Z+\-] -> SMerror
 	
 	mov r17, r16
-	call pushStack1
-	inc r25 		; comptador de numeros a l'stack
+	call pushQueue
+	inc r25 		; comptador de numeros a l'Queue
 	
 	pop r16 
+	call tx
+	ret
+SMop:	add r29, r25 		; mou el punter per apuntar als 'n' primers zeros a l'esquerra
+	ldi r25, 0 		; reset del comptador de numeros de l'Queue
+	ldi r26, 1 		; començar a omplir el r1
+	ldi r27, 2 		; omplir 2 registres -> r1:0
+	call queue2reg
+	call resetQueue
+	mov r24, r16 		; el registre r24 s'utilitza per desar quin el signe de la operació
 	call tx
 	ret
 SMshow: add r29, r25 		; mou el punter per apuntar als 'n' primers zeros a l'esquerra
 	ldi r26, 3 		; començar a omplir el r3
 	ldi r27, 2 		; omplir 2 registres -> r3:2
-	call stackToReg
+	rcall queue2reg
 	cpi r24, '+'
 	brne SMresta
-	call suma
+	rcall suma
+	rjmp SMres
+SMresta:rcall resta
+SMres:	rcall showResult
 	rjmp SMreset
-SMresta:call resta
-	rjmp SMreset
-SMop:	add r29, r25 		; mou el punter per apuntar als 'n' primers zeros a l'esquerra
-	ldi r25, 0 		; reset del comptador de numeros de l'stack
-	ldi r26, 1 		; començar a omplir el r1
-	ldi r27, 2 		; omplir 2 registres -> r1:0
-	call stackToReg
-	call resetStack1
-	mov r24, r16 		; el registre r24 s'utilitza per desar quin el signe de la operació
-	call tx
-	ret
 SMerr:	ledOn
 	clt
 	ret
@@ -319,6 +235,7 @@ SMreset:ldi r16, '\n'
 	ldi r16, '\r'
 	call tx
 	rcall mainReset
+	ret
 
 /* rutina de transmissió de byte,
 el valor a transmetre està al registre r16 */
@@ -338,14 +255,11 @@ __vector_18:
 	reti
 
 mainReset:
-	/* set-up custom stacks/queues */
+	/* set-up custom Queues/queues */
 	// la pila comença a la posició "1". A la posició "0" es guarda la longitud
-	call resetStack1
+	call resetQueue
 
 	ldi r25, 0 		; comptadors de caràcters introduïts
-	
-	/*ldi r26, 0
-	ldi r27, 0*/
 
 	/* es desa quina és la opearació que s'ha de fer quan es rep '=' */
 	ldi r24, 0
