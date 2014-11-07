@@ -10,8 +10,7 @@ UCSR0C = 0xC2
 UCSR0B = 0xC1
 UCSR0A = 0xC0
 
-SREG = 0x5F
-PRECISION = 4
+PRECISION = 8
 
 .global main
 .global __vector_18
@@ -53,17 +52,11 @@ resetQueue:
 	ldi r28, 0x0
 	ldi r29, 0x0
 	ldi r17, 0 		; afegim 4 zeros al començament
-/*	push r16
 _RQpush:ldi r16, PRECISION
 	call pushQueue
 	dec r16
 	cpi r16, 0
 	brlt _RQpush
-	pop r16*/
-	call pushQueue
-	call pushQueue
-	call pushQueue
-	call pushQueue
 	ret
 
 /* buida la pila des del registre indicat a r30 'n' vegades,
@@ -133,32 +126,7 @@ valErr:	pop r16
 endVal:	pop r15 		; Queue -> r15 (volem ignorar el valor de la pila)
 	ret
 
-/* suma de dos registres */
-suma:
-	push r16
-	clc
-	adc r0, r2
-	adc r1, r3
-	ldi r16, ' '
-	call tx
-	ldi r16, '='
-	call tx
-	pop r16
-_sumNC:	ret
-
-resta:
-	push r16
-	neg r2
-	neg r3 			; fem el complement A2 del segon byte
-	mov r16, r3
-	dec r16 		; restem l'1 que s'ha sumat al fer el complement A2
-	mov r3, r16
-	pop r16
-	rcall suma
-	ret
-
 showResult:
-	rcall showFlags
 	// r1
 	ldi r17, 0b11110000 	; mask
 	mov r16, r1
@@ -171,6 +139,7 @@ showResult:
 	and r16, r17
 	call val2asc
 	call tx
+
 	// r0
 	ldi r17, 0b11110000 	; mask
 	mov r16, r0
@@ -183,40 +152,34 @@ showResult:
 	and r16, r17
 	call val2asc
 	call tx
+
+	rcall showFlags
+
+	ret
+
+/* suma de dos registres */
+suma:
+	add r0, r2
+	adc r1, r3
+	ldi r16, '='
+	call tx
+	/*brcc _sumNC 		; si el carry = 0 -> salta a _sumNC
+	ldi r16, '1' 		; si no, el mostra per pantalla
+	call tx*/
+_sumNC:	ret
+
+resta:
+	push r16
+	neg r2
+	neg r3 			; fem el complement A2 del segon byte
+	mov r16, r3
+	subi r16, 1 		; restem l'1 que s'ha sumat al fer el complement A2
+	mov r3, r16
+	pop r16
+	rcall suma
 	ret
 
 showFlags:
-	push r17
-	push r30
-	push r31
-	ldi r30, SREG 
-	ldi r31, 0
-	ld r17, Z
-	ldi r16, ' '
-	call tx
-	ldi r16, 'C'
-	call tx
-	ldi r16, ':'
-	call tx
-	ldi r16, '0'
-	sbrc r17, 0
-	ldi r16, '1'
-	call tx
-	ldi r16, ' '
-	call tx
-	ldi r16, 'S'
-	call tx
-	ldi r16, ':'
-	call tx
-	ldi r16, '0'
-	sbrc r17, 4
-	ldi r16, '1'
-	call tx
-	ldi r16, ' '
-	call tx
-	pop r31
-	pop r30
-	pop r17
 	ret
 
 /* Màquina d'estats */
@@ -225,8 +188,6 @@ stateMachine:
 	cpi r16, 'r'
 	breq SMreset
 	cpi r16, '='
-	breq SMshow
-	cpi r16, '\r' 		; si es clica el Return es fa la operació
 	breq SMshow
 	cpi r16, '+'
 	breq SMop
@@ -294,6 +255,7 @@ __vector_18:
 mainReset:
 	/* set-up custom Queues/queues */
 	call resetQueue 	; la pila comença a la posició "1". A la posició "0" es guarda la longitud
+
 	ldi r25, 0 		; comptadors de caràcters introduïts
 	ldi r24, 0 		; es desa quina és la opearació que s'ha de fer quan es rep '='
 	clt 			; es desactiva el flag d'error (T)
