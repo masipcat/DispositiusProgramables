@@ -53,13 +53,7 @@ resetQueue:
 	ldi r28, 0x0
 	ldi r29, 0x0
 	ldi r17, 0 		; afegim 4 zeros al començament
-/*	push r16
-_RQpush:ldi r16, PRECISION
-	call pushQueue
-	dec r16
-	cpi r16, 0
-	brlt _RQpush
-	pop r16*/
+
 	call pushQueue
 	call pushQueue
 	call pushQueue
@@ -134,8 +128,7 @@ endVal:	pop r15 		; Queue -> r15 (volem ignorar el valor de la pila)
 	ret
 
 /* suma de dos registres */
-suma:
-	push r16
+suma:	push r16
 	clc
 	adc r0, r2
 	adc r1, r3
@@ -146,14 +139,17 @@ suma:
 	pop r16
 _sumNC:	ret
 
-resta:
-	push r16
-	neg r2
+/* resta de dos registres */
+resta:	push r16
+	neg r2 			; mires el carry del de menys pes. si C=0 -> A2 del següent. Si C=1 -> Negat
+	brcs _r_ 
 	neg r3 			; fem el complement A2 del segon byte
+	rjmp _Rsuma
+_r_:	neg r3
 	mov r16, r3
 	dec r16 		; restem l'1 que s'ha sumat al fer el complement A2
 	mov r3, r16
-	pop r16
+_Rsuma:	pop r16
 	rcall suma
 	ret
 
@@ -297,6 +293,10 @@ mainReset:
 	ldi r25, 0 		; comptadors de caràcters introduïts
 	ldi r24, 0 		; es desa quina és la opearació que s'ha de fer quan es rep '='
 	clt 			; es desactiva el flag d'error (T)
+	clc
+	cln
+	clz
+	cls
 	ret
 
 main:	/* configuració dels pins, és possible que no calgui*/
