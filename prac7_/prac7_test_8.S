@@ -64,12 +64,10 @@ _RQpush:ldi r16, PRECISION
 queue2reg:
 	push r16
 	push r20
-
 	mov r20, r27 		; r27 trobem a quants registres s'han d'omplir
 	dec r20
 	inc r26 		; compensem el pre-decrement (st -X)
 	ldi r27, 0 		; ld reg -> 0x00-- (on -- és el valor de r16)
-
 _s2r:	call popQueue
 	mov r16, r17
 	swap r16
@@ -80,7 +78,6 @@ _s2r:	call popQueue
 	dec r20 		; decrementem els registres restants
 	cpi r20, 0
 	brge _s2r 		; branch if r20 >= 0
-
 _eeend:	pop r20
 	pop r16
 	ret
@@ -196,13 +193,13 @@ stateMachine:
 
 	push r16
 	call asc2val 		; comprovem si s'ha introduit un caràcter valid
+	pop r16
 	brts SMerr 		; si el caràcter enviat [^0-9a-zA-Z+\-] -> SMerror
 	
 	mov r17, r16
 	call pushQueue
 	inc r25 		; comptador de numeros a l'Queue
 	
-	pop r16 
 	call tx
 	ret
 SMop:	add r29, r25 		; mou el punter per apuntar als 'n' primers zeros a l'esquerra
@@ -255,7 +252,6 @@ __vector_18:
 mainReset:
 	/* set-up custom Queues/queues */
 	call resetQueue 	; la pila comença a la posició "1". A la posició "0" es guarda la longitud
-
 	ldi r25, 0 		; comptadors de caràcters introduïts
 	ldi r24, 0 		; es desa quina és la opearació que s'ha de fer quan es rep '='
 	clt 			; es desactiva el flag d'error (T)

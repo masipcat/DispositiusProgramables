@@ -11,7 +11,7 @@ UCSR0B = 0xC1
 UCSR0A = 0xC0
 
 SREG = 0x5F
-PRECISION = 4
+PREC = 2 ; Bytes
 
 .global main
 .global __vector_18
@@ -50,14 +50,19 @@ popQueue:
 	ret
 
 resetQueue:
+	push r16
+	push r17
 	ldi r28, 0x0
 	ldi r29, 0x0
-	ldi r17, 0 		; afegim 4 zeros al començament
-
-	call pushQueue
-	call pushQueue
-	call pushQueue
-	call pushQueue
+	ldi r16, PREC
+	ldi r17, 0 		; valor que afegim al fer push
+_RQpush:rcall pushQueue
+	rcall pushQueue
+	dec r16
+	cpi r16, 0
+	brne _RQpush
+	pop r17
+	pop r16
 	ret
 
 /* buida la pila des del registre indicat a r30 'n' vegades,
@@ -65,7 +70,6 @@ resetQueue:
 queue2reg:
 	push r16
 	push r20
-
 	mov r20, r27 		; r27 trobem a quants registres s'han d'omplir
 	dec r20
 	inc r26 		; compensem el pre-decrement (st -X)
@@ -73,16 +77,14 @@ queue2reg:
 
 _s2r:	call popQueue
 	mov r16, r17
-	swap r16
+	swap r16 		; half-byte de mes pes
 	call popQueue
 	eor r16, r17
-
 	st -X, r16
 	dec r20 		; decrementem els registres restants
 	cpi r20, 0
 	brge _s2r 		; branch if r20 >= 0
-
-_eeend:	pop r20
+	pop r20
 	pop r16
 	ret
 
@@ -129,59 +131,108 @@ endVal:	pop r15 		; Queue -> r15 (volem ignorar el valor de la pila)
 
 /* suma de dos registres */
 suma:	push r16
-	clc
-	adc r0, r2
-	adc r1, r3
+	push r17
+	push r18
+	push r28
+	push r29
+	push r30
+
+	rcall resetFlags
+
+	ldi r29, 0
+	ldi r28, 0
+	ldi r30, PREC
+_suml:	ld r16, Y 		; rN
+	push r28
+
+	add r28, r30 		; rN + PREC. P.e. (PREC=8): r0 + r8
+	ld r17, Y
+	pop r28
+
+	;adc r16, r17
+	add r16, r17
+	st Y+, r16 		; resultat a rN
+
+	brcc _addC 		; si C=1 -> rN+1 = 1
+	ld r16, Y
+	inc r16
+	st Y, r16
+
+	clc 			; clear carry
+
+_addC:	cpi r28, PREC
+	brne _suml
+
 	ldi r16, ' '
 	call tx
 	ldi r16, '='
 	call tx
+
+	pop r30
+	pop r29
+	pop r28
+	pop r18
+	pop r17
 	pop r16
-_sumNC:	ret
+	ret
 
 /* resta de dos registres */
-resta:	push r16
-	neg r2 			; mires el carry del de menys pes. si C=0 -> A2 del següent. Si C=1 -> Negat
-	brcs _r_ 
-	neg r3 			; fem el complement A2 del segon byte
-	rjmp _Rsuma
-_r_:	neg r3
-	mov r16, r3
-	dec r16 		; restem l'1 que s'ha sumat al fer el complement A2
-	mov r3, r16
-_Rsuma:	pop r16
+resta:	rcall resetFlags
+	push r16
+	push r28
+	push r29
+
+	ldi r29, 0
+	ldi r28, PREC 		; rN -> rN+PREC
+_restL:	ld r16, Y 		; rN
+	
+	brcs _r_ 		; C=1 -> NOT(r16) [com r16]
+	neg r16 		; mires el carry del de menys pes. si C=0 (borrow=1) -> A2 del següent. Si C=1 -> Negat
+	rjmp _rest_
+_r_: 	com r16
+_rest_:	st Y+, r16 		; resultat a rN
+
+	cpi r28, PREC * 2
+	brne _restL
+
+	pop r29
+	pop r28
+	pop r16
 	rcall suma
 	ret
 
 showResult:
 	rcall showFlags
-	// r1
+	push r16
+	push r17
+	push r18
+	push r28
+	push r29
+	ldi r29, 0
+	ldi r28, PREC
+__SRn:	ld r18, -Y
 	ldi r17, 0b11110000 	; mask
-	mov r16, r1
+	mov r16, r18
 	and r16, r17
 	swap r16
 	call val2asc
 	call tx
 	swap r17
-	mov r16, r1
+	mov r16, r18
 	and r16, r17
 	call val2asc
 	call tx
-	// r0
-	ldi r17, 0b11110000 	; mask
-	mov r16, r0
-	and r16, r17
-	swap r16
-	call val2asc
-	call tx
-	swap r17
-	mov r16, r0
-	and r16, r17
-	call val2asc
-	call tx
+	cpi r28, 0
+	brne __SRn
+	pop r29
+	pop r28
+	pop r18
+	pop r17
+	pop r16
 	ret
 
 showFlags:
+	push r16
 	push r17
 	push r30
 	push r31
@@ -190,6 +241,8 @@ showFlags:
 	ld r17, Z
 	ldi r16, ' '
 	call tx
+	cpi r24, '-'
+	breq _SFborr
 	ldi r16, 'C'
 	call tx
 	ldi r16, ':'
@@ -198,7 +251,16 @@ showFlags:
 	sbrc r17, 0
 	ldi r16, '1'
 	call tx
-	ldi r16, ' '
+	rjmp _SFsign
+_SFborr:ldi r16, 'B' 			; B = Not(C)
+	call tx
+	ldi r16, ':'
+	call tx
+	ldi r16, '1'
+	sbrc r17, 0
+	ldi r16, '0'
+	call tx
+_SFsign:ldi r16, ' '
 	call tx
 	ldi r16, 'S'
 	call tx
@@ -213,6 +275,7 @@ showFlags:
 	pop r31
 	pop r30
 	pop r17
+	pop r16
 	ret
 
 /* Màquina d'estats */
@@ -242,16 +305,16 @@ stateMachine:
 	ret
 SMop:	add r29, r25 		; mou el punter per apuntar als 'n' primers zeros a l'esquerra
 	ldi r25, 0 		; reset del comptador de numeros de l'Queue
-	ldi r26, 1 		; començar a omplir el r1
-	ldi r27, 2 		; omplir 2 registres -> r1:0
+	ldi r26, PREC-1 	; començar a omplir el r1
+	ldi r27, PREC 	; omplir 2 registres -> r1:0
 	call queue2reg
 	call resetQueue
 	mov r24, r16 		; el registre r24 s'utilitza per desar quin el signe de la operació
 	call tx
 	ret
 SMshow: add r29, r25 		; mou el punter per apuntar als 'n' primers zeros a l'esquerra
-	ldi r26, 3 		; començar a omplir el r3
-	ldi r27, 2 		; omplir 2 registres -> r3:2
+	ldi r26, (PREC-1)*2+1 	; començar a omplir el r3
+	ldi r27, PREC 	 	; omplir 2 registres -> r3:2
 	rcall queue2reg
 	cpi r24, '+'
 	brne SMresta
@@ -287,12 +350,23 @@ __vector_18:
 	call stateMachine
 	reti
 
-mainReset:
-	/* set-up custom Queues/queues */
+mainReset: 	/* set-up custom Queues/queues */
+	// clr dels registres
+	ldi r28, (PREC * 2) - 1
+	ldi r29, 0
+_MRclr:	st Y, r29 		; resultat a rN
+	dec r28
+	cpi r28, 0
+	brne _MRclr
+
 	call resetQueue 	; la pila comença a la posició "1". A la posició "0" es guarda la longitud
 	ldi r25, 0 		; comptadors de caràcters introduïts
 	ldi r24, 0 		; es desa quina és la opearació que s'ha de fer quan es rep '='
 	clt 			; es desactiva el flag d'error (T)
+	rcall resetFlags
+	ret
+
+resetFlags:
 	clc
 	cln
 	clz
@@ -327,9 +401,10 @@ main:	/* configuració dels pins, és possible que no calgui*/
 	ldi r16, 0b10011000
 	sts UCSR0B, r16
 
+	rcall mainReset
+
 	/* habilitem interrupcions */
 	sei
-	rcall mainReset
 	ledOff
 
 loop: 	/* el bucle principal no fa res */
