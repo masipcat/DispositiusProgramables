@@ -11,7 +11,7 @@ UCSR0B = 0xC1
 UCSR0A = 0xC0
 
 SREG = 0x5F
-PREC = 8                        ; Bytes
+PREC = 4                        ; Bytes
 
 .global main
 .global __vector_18
@@ -25,13 +25,10 @@ PREC = 8                        ; Bytes
 .endm
 
 /* es crea una cua a la memòria de dades. Es fa push de r17 */
-pushQueue:
-        // Y = r29:28
-        //       H:L
-        // S'utilitza r29 per desar el "bottom" de la cua (s'usarà per fer el pop com un cua)
+pushQueue: ; S'utilitza r29 per desar el "bottom" de la cua (s'usarà per fer el pop com un cua)
         push r17
         push r29
-        ldi r29, 0x1            ; 0x01-- SRAM
+        ldi r29, 0x1            ; 0x01__ SRAM
         st Y+, r17
         ldi r17, 0xFF           ; 0xFF = delimitador
         st Y, r17               ; final de la cua
@@ -49,7 +46,8 @@ popQueue:
         pop r28
         ret
 
-resetQueue:
+/* fa un reset de la cua */
+resetQueue: /* mou el punter a la poisició inicial i afegeix N zeros (N = PREC*2) */
         push r16
         push r17
         ldi r28, 0x0
@@ -65,8 +63,8 @@ _RQpush:rcall pushQueue
         pop r16
         ret
 
-/* buida la cua des del registre indicat a r30 'n' vegades,
-  inidcant la 'n' al registre r31 */
+/* mou els 'n' primers valors de la cua al registre que està indicat a r30
+  on 'n' està definit a r31 */
 queue2reg:
         push r16
         push r20
@@ -76,9 +74,9 @@ queue2reg:
         ldi r27, 0              ; ld reg -> 0x00-- (on -- és el valor de r16)
 _q2r:   call popQueue
         mov r16, r17
-        swap r16                ; half-byte de mes pes
+        swap r16                ; nibble de més pes
         call popQueue
-        eor r16, r17
+        eor r16, r17            ; nibble de menys pes
         st -X, r16
         dec r20                 ; decrementem els registres restants
         cpi r20, 0
@@ -90,25 +88,28 @@ _q2r:   call popQueue
 /* converteix un caràcter que representa un
    número hexadecimal a un enter */
 asc2val:
+        cpi r16, '0'
+        brlo _a2vErr
         cpi r16, 'a'
-        brlo t                  ; si el caràcter introduit és < 'a'
-        subi r16, 32            ; lowercase -> uppercase
-t:      cpi r16, 'A'            ; si r16 >= 'A', salta:
-        brsh w
+        brlo _a2vUp             ; si el caràcter introduit és < 'a'
+        subi r16, 32            ; uppercase
+_a2vUp: cpi r16, 'A'            ; si r16 >= 'A', salta:
+        brsh _a2vOff
+        cpi r16, ':'            ; si el valor no està entre ['0', ':')
+        brsh _a2vErr
         subi r16, 48            ; restem l'offset de '0'
-        rjmp chkVal
-w:      subi r16, 65 - 10       ; restem l'offset de 'A'
-chkVal: cpi r16, 16
-        brsh a2vErr
+        rjmp _a2vChk
+_a2vOff:subi r16, 65 - 10       ; restem l'offset de 'A'
+_a2vChk:cpi r16, 16
+        brsh _a2vErr
         ret
-a2vErr: set                     ; el flag T s'utilitza com a flag d'error
-        ldi r16, 0xFF           ; error
+_a2vErr:set                     ; el flag T s'utilitza com a flag d'error
+        ldi r16, 0xFF           ; caràcter d'error
         ret
 
 /* converteix un valor enter a un caràcter que
    representa el número en hexadecimal */
 val2asc:
-        push r16
         cpi r16, 16
         brsh valErr             ; si l'enter és >= 16 -> valErr
         cpi r16, 10             ; si l'enter és >= 10 -> lletra
@@ -117,49 +118,79 @@ val2asc:
         rjmp endVal
 w2:     subi r16, -65 + 10
         rjmp endVal
-valErr: pop r16
+valErr: ldi r16, '_'            ; caràcter per mostrar l'error
         set                     ; el flag T s'utilitza com a flag d'error
-        ret
-endVal: pop r15                 ; Queue -> r15 (volem ignorar el valor de la cua)
-        ret
+endVal: ret
 
 /* suma d'N registres */
 suma:   push r16
         push r17
         push r18
+        push r20
+        push r25
+        push r27
         push r28
         push r29
         push r30
 
         rcall resetFlags
 
-        ldi r29, 0
-        ldi r28, 0
-        ldi r30, PREC
-_SLoop: ld r16, Y               ; rN
-        push r28
+        ldi r17, 0
 
-        add r28, r30            ; rN + PREC. p.e.(PREC=8): r0 + r8
-        ld r17, Y
-        pop r28
+        ldi r30, SREG           ; Z = SREG, per desar posteriorment SREG a la pila
+        ldi r31, 0
+
+        /* inicialització dels r0->N a zero */
+        ldi r28, 0              ; reg Y
+        ldi r29, 0              ; reg Y
+_SLoop1:st Y+, r31
+        cpi r28, PREC
+        brne _SLoop1
+
+        ldi r25, 0              ; used as Carry
+        ldi r27, PREC
+        ldi r28, 0              ; reg Y
+        ldi r29, 0              ; reg Y
+_SLoop: ld r16, Y               ; rN
+        
+        ;push r28                ; evitem modificar SREG en obtenir r17 (Y)
+        ;ld r20, Z               ;       r20 <- SREG
+        add r28, r27            ; rN + PREC. p.e.(PREC=8): r0 + r8
+        ;st Z, r20               ;       SREG -> r20
+        ld r17, Y               ; r17 <- r(N+PREC)
+        ;pop r28
+
+        add r16, r17
+
+        ;cp r16, r17             ; r17 > r16 --> Carry
+        ;br
 
         ;adc r16, r17
-        add r16, r17
         st Y+, r16              ; resultat a rN
 
-        brcc _SCC               ; si C=1 -> rN+1 = 1
-        ld r16, Y
-        inc r16
-        st Y, r16
-
-        clc                     ; clear carry
+        cpi r25, 1
+        brne _SCC
+        ;brcc _SCC               ; si C=1 ->
+        ld r16, Y               ; carrega rN+1
+        inc r16                 ; (rN+1)++
+        cpi r16, 0
+        brne _SCS
+        ldi r25, 0
+        ;push r16
+        ;ldi r16, 'c'
+        ;call tx
+        ;pop r16
+_SCS:   st Y, r16               ; desa rN+1
+        ;clc                     ; clear carry
 
 _SCC:   cpi r28, PREC
         brne _SLoop
-
         pop r30
         pop r29
         pop r28
+        pop r27
+        pop r25
+        pop r20
         pop r18
         pop r17
         pop r16
@@ -180,7 +211,6 @@ _Rnot:  com r16
 _Rst:   st Y+, r16              ; resultat a rN
         cpi r28, PREC * 2
         brne _RLoop
-
         pop r29
         pop r28
         pop r16
@@ -209,12 +239,12 @@ _SRrec: ld r18, -Y
         mov r16, r18
         and r16, r17
         swap r16
-        call val2asc
+        call val2asc            ; converteix el nibble de més pes
         call tx
         swap r17
         mov r16, r18
         and r16, r17
-        call val2asc
+        call val2asc            ; converteix el nibble de menys pes
         call tx
         cpi r28, 0
         brne _SRrec
@@ -231,12 +261,12 @@ showFlags:
         push r17
         push r30
         push r31
-        ldi r30, SREG 
+        ldi r30, SREG
         ldi r31, 0
         ld r17, Z
         ldi r16, ' '
         call tx
-        cpi r24, '-'
+        cpi r24, '-'                    ; si es fa la operació resta, mostra el borrow
         breq _SFborr
         ldi r16, 'C'
         call tx
@@ -293,14 +323,13 @@ stateMachine:
         mov r17, r16
         call pushQueue
         inc r25                 ; comptador de numeros a l'Queue
-        pop r16 
-
+        pop r16
         call tx                 ; mostra el caràcter introduït
         ret
 SMop:   add r29, r25            ; mou el punter per apuntar als 'n' primers zeros a l'esquerra
         ldi r25, 0              ; reset del comptador de numeros de l'Queue
         ldi r26, PREC-1         ; començar a omplir el r1
-        ldi r27, PREC   ; omplir 2 registres -> r1:0
+        ldi r27, PREC           ; omplir 2 registres -> r1:0
         call queue2reg
         call resetQueue
         mov r24, r16            ; el registre r24 s'utilitza per desar quin el signe de la operació
@@ -316,7 +345,7 @@ SMshow: add r29, r25            ; mou el punter per apuntar als 'n' primers zero
         rjmp SMres
 SMresta:rcall resta
 SMres:  rcall showResult
-        rjmp SMreset
+        rjmp SMreset            ; després de realitzar una suma/resta, es fa un reset
 SMerr:  ledOn
         clt
         ret
@@ -346,7 +375,7 @@ __vector_18:
 
 /* set-up custom Queue */
 mainReset:
-        ldi r28, (PREC * 2) - 1
+        ldi r28, PREC*2 - 1
         ldi r29, 0
 _MRclr: st Y, r29               ; resultat a rN
         dec r28
@@ -362,10 +391,10 @@ _MRclr: st Y, r29               ; resultat a rN
 
 /* fa un reset de tots els flags relacionats amb la ALU */
 resetFlags:
-        clc
-        cln
-        clz
-        cls
+        clc                     ; Carry
+        cln                     ; Negative
+        clz                     ; Zero
+        cls                     ; Sign
         ret
 
 main:   /* configuració dels pins, és possible que no calgui*/
@@ -400,6 +429,6 @@ main:   /* configuració dels pins, és possible que no calgui*/
         sei
         ledOff
 
-loop:   /* el bucle principal no fa res */
+/* el bucle principal no fa res */
+loop:
         rjmp loop
-        ret
