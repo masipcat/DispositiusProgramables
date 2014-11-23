@@ -81,8 +81,7 @@ loop:   rjmp loop
 .include "taula8.S"
 
 .section .bss
-vegades: .byte 0
-bufer: .space 32,0     /*repeteix 32 vegades, 1byte, amb valor 0. Mirar directiva .fill .skip també pot servir */
+bufer: .space 32, 0     /*repeteix 32 vegades, 1byte, amb valor 0. Mirar directiva .fill .skip també pot servir */
 
 .global __do_copy_data
 .global __do_clear_bss
