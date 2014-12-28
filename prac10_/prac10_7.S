@@ -34,9 +34,16 @@ DEBUGAR = 1
 .endm
 
 .macro isInputHigh
-        in r2, PIND
-        andi r2, 0b100
-        
+        push r16
+        in r16, PIND                    ; entrada 2
+        andi r16, 0b100
+        cpi r16, 0b100
+        pop r16
+        breq 1f
+        clt
+        rjmp 2f
+1:      set
+2:
 .endm
 
 tx:     push r17
@@ -47,35 +54,46 @@ tx1:    lds r17, UCSR0A
         pop r17
         ret
 
+.macro procesaEnd
+        ;pop r2
+        ;out SREG, r2                            ; preservar SREG
+        ret
+.endm
+
 procesa:
         in r2, SREG
-        cpi r22, 1 * SUBD + SUBD/4            ; es considera soroll
+        ;push r2
+.if DEBUGAR == 1
+        cpi r22, 1 * SUBD + SUBD/4              ; es considera soroll
         brlo _d
-        cpi r22, 3 * SUBD + SUBD/4      ; 
+        cpi r22, 3 * SUBD + SUBD/4              ; és un punt o un final de caràcter
         brsh _p
         ldi r20, '.'
         sbrc r2, 6
-        ret
+        procesaEnd
         ldi r20, ' '
-        ret
-_p:     cpi r22, 7 * SUBD + SUBD/4      ; 
+        procesaEnd
+_p:     cpi r22, 7 * SUBD + SUBD/4              ; és una ratlla o un espai
         brsh _r
         ldi r20, '-'
         sbrc r2, 6
-        ret
+        procesaEnd
         ldi r20, ' '
-        ret
+        procesaEnd
 _r:     cpi r22, 29
         brsh _d
         ldi r20, ' '
-        ret
+        procesaEnd
 _d:     ldi r20, ''
-        ret
+        procesaEnd
+.else
+        procesaEnd
+.endif
 
 __vector_1: // Interrupció de que canvia l'entrada
         ledOn
 .if DEBUGAR == 1
-        cpi r22, 0 // si no ha passat ni un 100
+        cpi r22, 0 // si no ha passat ni un 100/
         breq _v1e
 .endif
         rcall procesa
@@ -84,16 +102,7 @@ __vector_1: // Interrupció de que canvia l'entrada
         rcall tx
 
 _v1e:   clr r22
-        push r16
-        in r16, PIND                    ; 2
-        andi r16, 0b100
-        cpi r16, 0b100
-        pop r16
-        breq _set
-        clt
-        rjmp _seg
-_set:   set
-        
+        isInputHigh                     ; T = 1 if Input High, else T = 0
 _seg:   rcall desactivaTimer1
         rcall clearTimer1
         rcall activaTimer1
@@ -184,6 +193,10 @@ main:
         ldi r22, 0              // N vegades que ha passat u_temps
         ldi r23, 0              // Si s'ha rebut un punt o una ratlla
         ldi r24, 0              // Número de punts i ratlles en un caràcter
+
+        clr r0
+        clr r1
+        inc r1
 
         clt
         sei
