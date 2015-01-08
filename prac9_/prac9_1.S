@@ -2,6 +2,7 @@
 
 u_temps = 100 // ms
 valCR1A = 250*u_temps-1
+MODE_TEST = 1
 
 .global main
 .global __vector_18
@@ -48,8 +49,10 @@ valCR1A = 250*u_temps-1
 
 addToQueue:
         st X+, r16
-        cpi r26, lo8(bufer_end)
+        cpi r26, lo8(bufer_end - 1)     ; ens reservem un registre per distinjir el ple complet i el buit
         brne _aQ                        ; si no hem arribat al final...
+        rcall isQueueEmpty              ; si la cua no està buida (T=0) s'ignora afegir el valor
+        brtc _aQ
         resetEndQueuePointer
 _aQ:    ret
 
@@ -60,6 +63,8 @@ popQueue:
         resetStartQueuePointer
 _pR:    ret
 
+/* és una subrutina que 'retorna' T=1 o T=0 segons
+   si la cua està plena o buida*/
 isQueueEmpty:
         cp r26, r28
         brne _no
@@ -105,28 +110,36 @@ __vector_18:
         reti
 
 __vector_11:
-        cpi r20, 1                      ; fer beeps "n" unitats
-        brlo _v111
+        ;push r16
+        ;ldi r16, 'H'
+        ;rcall tx
+        ;pop r16
+
+        cpi r20, 0                      ; fer beeps "n" unitats
+        breq _v111
         so
         dec r20                         ; ara s'ha de processar una unitat menys
         reti
-_v111:  cpi r21, 1                      ; fer silenci "n" unitats
-        brlo _v112
+_v111:  cpi r21, 0                      ; fer silenci "n" unitats
+        breq _v112
         silenci
         dec r21
+        /*brne _vEnd                      ; si encara hi ha més silencis...
+        rcall process                   ; preparem el següent caràcter
+        */
         reti
 _v112:  silenci                         ; si no hem d'esperar, processem el següent caràcter
-        rcall process                   ; processem un caràcter
-        reti
+        rcall process                   ; processem el següent caràcter
+_vEnd:  reti
 
 process:
         cpi r17, 0                      ; si r17 > 0, hi ha un caràcter a mig processar
-        brne _Pnext                     ; per tant, es salta a la subrutina "morse"
-        rcall isQueueEmpty              ; si està processat, mirem si hi ha algun a la cua
-        brts _Pend                      ; si està buid -> ret
+        brne _PnextC                    ; per tant, es crida la subrutina "morse"
+        rcall isQueueEmpty              ; si no hi ha cap char a mig processar, mirem si hi ha cap char a la cua
+        brts _Pend                      ; si no hi ha cap char a la cua -> ret
         rcall popQueue                  ; obtenim el char a r16
-        rcall prepareChar
-_Pnext: rcall morse
+        rcall prepareChar               ; preparem el char
+_PnextC:rcall morse
 _Pend:  ret
 
 prepareChar:
@@ -136,7 +149,7 @@ prepareChar:
 
 /* rutina que activa la pota de sortida*/
 punt:
-        inc r20
+        inc r20                         ; una unitat més
         inc r21
         so
         ret
@@ -167,14 +180,14 @@ _mRet:  ret
 activaTimer1:
         push r16
         push r17
-        /*ldi r16, 0
-        sts TCNT1H, r16                 ; fem un clear del TCNT
-        sts TCNT1L, r16*/
         ldi r16, hi8(valCR1A)
         ldi r17, lo8(valCR1A)
         sts OCR1AH, r16
         sts OCR1AL, r17
-        rjmp _confT1                    ; per evitar tornar a fer un push
+        pop r17
+        pop r16
+        ret
+
 configuraTimer1:
         push r16
         push r17
@@ -190,7 +203,7 @@ _confT1:ldi r16, 0b00000010             ; activem la interrupció de Ouput Compa
 
 desactivaTimer1:
         push r16
-        ldi r16, 0b00000000
+        ldi r16, 0
         sts TCCR1A, r16
         sts TCCR1B, r16
         sts TCNT1H, r16
@@ -203,7 +216,12 @@ activaBeep:
         // 16*10^6 / (2*64*(1+124))
         // prescaler N = 64
         // compare output = 124
+.if MODE_TEST == 1
         //ledOn
+        sbi DDRB, 3
+        sbi PORTB, 3
+        ret
+.else
         push r16
         ldi r16, 0b00000100             ; configurem que clk/64 = 250 kHz // 011
         sts TCCR2B, r16
@@ -219,8 +237,14 @@ configuraBeep:
         sbi DDRB, 3                     ; configurem el pin 11 (OC2A) com a sortida
         pop r16
         ret
+.endif
 
 desactivaBeep:
+.if MODE_TEST == 1
+        //ledOff
+        cbi PORTB, 3
+        ret
+.else
         //ledOff
         sts TCCR2A, r0
         sts TCCR2B, r0
@@ -228,6 +252,7 @@ desactivaBeep:
         //cbi DDRB, 3                   ; pin 11 com a entrada
         //cbi PORTB, 3                  ; posem un 0 al pin 11 (OC2A)
         ret
+.endif
 
 main:
         // solve 100 = (2*N*(1+F)) / 16*10^6 where N and F are Natural
@@ -261,6 +286,14 @@ main:
 
         resetQueue                      ; inicialitzem la cua
 
+        rcall configuraTimer1
+
+        /*sbi DDRB, 3
+        sbi PORTB, 3
+        nop
+        nop
+        cbi PORTB, 3*/
+
         /*habilitem interrupcions */
         sei
 
@@ -278,7 +311,7 @@ loop:
 .section .bss
 
 bufer:
-        .space 32, 0
+        .space 32, 0                    ; limited to 255
 bufer_end:
 
 .global __do_copy_data

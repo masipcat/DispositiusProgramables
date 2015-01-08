@@ -4,7 +4,8 @@ u_temps = 100
 SUBD = 4
 temps = (250*u_temps/SUBD)-1
 
-DEBUGAR = 1
+DEBUGAR = 0
+TRACE = 0
 
 .global main
 .global __vector_1
@@ -33,18 +34,21 @@ DEBUGAR = 1
         cbi PORTB, 5
 .endm
 
-.macro isInputHigh
+isInputHigh:
+        /* T = 1 -> input High
+           T = 0 -> input Low
+         */
         push r16
         in r16, PIND                    ; entrada 2
         andi r16, 0b100
         cpi r16, 0b100
         pop r16
-        breq 1f
-        clt
-        rjmp 2f
-1:      set
-2:
-.endm
+        set
+        brne iiH1
+        ret
+iiH1:   clt
+        ret
+
 
 tx:     push r17
 tx1:    lds r17, UCSR0A 
@@ -54,65 +58,136 @@ tx1:    lds r17, UCSR0A
         pop r17
         ret
 
-.macro procesaEnd
-        ;pop r2
-        ;out SREG, r2                            ; preservar SREG
-        ret
-.endm
-
 procesa:
         in r2, SREG
-        ;push r2
-.if DEBUGAR == 1
-        cpi r22, 1 * SUBD + SUBD/4              ; es considera soroll
+        cpi r22, 1 * SUBD               ; es considera soroll o senyal invàlid (no s'hauria de produir)
         brlo _d
-        cpi r22, 3 * SUBD + SUBD/4              ; és un punt o un final de caràcter
+        cpi r22, 3 * SUBD               ; és un punt o un final de caràcter
         brsh _p
+        clr r25                         ; pausa entre punts i/o ratlles
+.if DEBUGAR == 1
+        ldi r20, ' '
+.endif
+        sbrs r2, 6                      ; comprovem l'estat de T
+        ret
+        clc
+        rol r23                         ; afegim un zero a la dreta
+        inc r24                         ; número de punts i ratlles
+        clr r25                         ; esperant més punts i ratlles
+.if DEBUGAR == 1
         ldi r20, '.'
-        sbrc r2, 6
-        procesaEnd
-        ldi r20, ' '
-        procesaEnd
-_p:     cpi r22, 7 * SUBD + SUBD/4              ; és una ratlla o un espai
+.endif
+        ret
+_p:     cpi r22, 7 * SUBD + 2           ; és una ratlla o un pausa de char
         brsh _r
+        ldi r25, 1
+.if DEBUGAR == 1
+        ldi r20, 'p'
+.endif
+        sbrs r2, 6                      ; comprovem l'estat de T
+        ret
+        clc
+        rol r23
+        inc r23                         ; afegim un 1 a la dreta
+        inc r24                         ; número de punts i ratlles
+        clr r25                         ; esperant més punts i ratlles
+.if DEBUGAR == 1
         ldi r20, '-'
-        sbrc r2, 6
-        procesaEnd
-        ldi r20, ' '
-        procesaEnd
-_r:     cpi r22, 29
-        brsh _d
-        ldi r20, ' '
-        procesaEnd
-_d:     ldi r20, ''
-        procesaEnd
-.else
-        procesaEnd
+.endif
+        ret
+_r:     ldi r25, 2                      ; pausa paraula
+.if DEBUGAR == 1
+        ldi r20, 'P'
+.endif
+        ret
+_d:     ldi r25, 3                      ; ignorem
+.if DEBUGAR == 1
+        ldi r20, 'i'
+.endif
+        ret
+
+onInputChange:
+.if TRACE == 1
+        in r2, SREG
+        ledOn
+        sbrc r2, 6                      ; comprovem l'estat de T
+        ledOff
 .endif
 
-__vector_1: // Interrupció de que canvia l'entrada
-        ledOn
 .if DEBUGAR == 1
-        cpi r22, 0 // si no ha passat ni un 100/
-        breq _v1e
+        cpi r25, 3                      ; si s'ha d'ignorar el processament...
+        breq _ign
 .endif
         rcall procesa
-        cpi r20, ''
+.if DEBUGAR == 1
+        rcall tx
+.endif
+        cpi r25, 0                      ; si s'esperen més caràcters... -> _v1e
         breq _v1e
+
+.if TRACE == 1 && DEBUGAR == 1
+        mov r20, r23
+        rcall tx
+        mov r20, r24
+        rcall tx
+        mov r20, r25
+        rcall tx
+        ldi r20, '<'
+        rcall tx
+.endif
+.if DEBUGAR == 1
+        ldi r20, '='
+        rcall tx
+.endif
+
+        // muntem a el valor del registre "morse"
+        mov r16, r24                    ; desem el valor del comptador
+        clr r2        
+_next:  ror r23 
+        ror r2
+        dec r24
+        brne _next
+        eor r16, r2                     ; resultat (es busca el caràcter a la taula)
+        rcall troba_codi
+        cpi r16, 29
+        breq _nn
+        mov r20, r16
         rcall tx
 
-_v1e:   clr r22
-        isInputHigh                     ; T = 1 if Input High, else T = 0
-_seg:   rcall desactivaTimer1
+_nn:    clr r23                         ; reset dels comptadors de Morse
+        clr r24
+        clr r25
+
+        rjmp _v1e
+
+_ign:
+.if DEBUGAR == 1
+        clr r25
+        ldi r20, 'i'
+        rcall tx
+.endif
+
+_v1e:   clr r22                         ; reset del comptador de 100/SUBD ms
+        rcall isInputHigh               ; T = 1 if input is high, else T = 0
+        rcall desactivaTimer1
         rcall clearTimer1
         rcall activaTimer1
+        ret
+
+__vector_1: // Interrupció de que canvia l'entrada
+        rcall onInputChange
         reti
 
 __vector_11: // Interrupció timer1
-        cpi r22, 255
+        cpi r22, 7 * SUBD + 3
         breq _v11e
         inc r22
-_v11e:  reti
+        reti
+_v11e:  rcall onInputChange
+        //ldi r25, 2                     ; pausa llarga
+        rcall desactivaTimer1          ; potser  es podria activar per optimitzar el consum de l'Arduino
+        rcall clearTimer1
+        reti
 
 activaTimer1:
         push r16
@@ -157,6 +232,22 @@ clearTimer1:
         pop r16
         ret
 
+troba_codi:
+        push r30
+        push r31
+        push r17
+        ldi r31, hi8(taulac1)
+        ldi r30, lo8(taulac1)
+tr:     ld r17, Z+
+        cp r17, r16
+        brne tr
+                                // S'afaga el valor ASCII
+        ldd r16, Z+35
+        pop r17
+        pop r31
+        pop r30
+        ret
+
 main:   
         ldi r16, 0
         sts UBRR0H, r16
@@ -186,17 +277,24 @@ main:
         ldi r16, 0b00011000
         sts UCSR0B, r16
 
-        sbi DDRB, 5             // configurem el pin 13 com a sortida
+        sbi DDRB, 5                     // configurem el pin 13 com a sortida
         rcall configuraTimer1
         rcall desactivaTimer1
 
-        ldi r22, 0              // N vegades que ha passat u_temps
-        ldi r23, 0              // Si s'ha rebut un punt o una ratlla
-        ldi r24, 0              // Número de punts i ratlles en un caràcter
+        ldi r22, 0                      // N vegades que ha passat u_temps
+        ldi r23, 0                      // Punts i ratlles (omplim de dreta a esquerra)
+        ldi r24, 0                      // Número de punts i ratlles en un caràcter
+        ldi r25, 3                      // Estat del morse:
+                                        //   0: processant
+                                        //   1: final caràcter
+                                        //   2: final paraula
+                                        //   3: igonrar (pausa massa llarga o massa curta)
 
         clr r0
         clr r1
         inc r1
+
+        ledOff
 
         clt
         sei
@@ -204,3 +302,9 @@ main:
         rcall activaTimer1
 
 loop:   rjmp loop
+
+.section .data
+
+.include "taula9.S"
+
+.global __do_copy_data
